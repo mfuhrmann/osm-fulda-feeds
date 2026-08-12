@@ -1,29 +1,36 @@
-# maubot + rss — OSM-Monitoring Landkreis Fulda nach Matrix
+# maubot + rss — OSM-Monitoring nach Matrix
 
-Postet neue OSM-Hinweise (Notes) und Changesets aus dem Landkreis Fulda in einen
-Matrix-Raum. Ersatz für `@rss:t2bot.io` (seit 2023 ungepflegt) und
+Postet neue OSM-Hinweise (Notes) und Changesets aus einer frei wählbaren Region
+in einen Matrix-Raum. Ersatz für `@rss:t2bot.io` (seit 2023 ungepflegt) und
 `@feeds:integrations.ems.host` (reagiert nicht auf Befehle).
 
-## Läuft wo
+Selbst betrieben heißt: eigener Bot-Account, eigener Container, Feed-Fehler im
+Log statt geraten. Ein Container, ein Verzeichnis, kein Application Service.
 
-Produktiv auf dem VPS unter `~/osm-fulda-feeds` (`ssh horst@vps`), Container
-`osm-fulda-feeds-maubot-1`, `restart: unless-stopped`.
+**Als Vorlage gedacht.** Durchgehendes Beispiel ist der Landkreis Fulda —
+Bounding Box, Feed-Raten und das daraus abgeleitete Abfrageintervall sind echte
+Werte, keine Platzhalter. Für eine andere Region tauschst du die Bounding Box
+und rechnest das Intervall neu (siehe [Die Feeds](#die-feeds)).
 
-Bot-Account `@osm-fulda-feed:matrix.org`, Web-Login-Benutzer `osm-fulda-feed`.
+Der eigene Betriebszustand — Räume, Bot-Account, Host, laufende Abos — gehört
+nicht hierher, sondern in eine eigene Datei: siehe
+[SETUP.example.md](./SETUP.example.md).
 
-Aktuelle Abos:
+## Was du anpassen musst
 
-| Raum | Feed |
-|------|------|
-| `!JrryfqeuioiemGjGpk:matrix.org` | Changesets, offizieller OSM-Feed |
-| `!fwffVvnqgIxsSlpxMa:matrix.org` | Notes |
+| Wert | Wo | Beispiel hier |
+|------|-----|---------------|
+| Bounding Box | Feed-URLs, Schritt 7 | Landkreis Fulda, `9.4272478,50.3561446,10.0830766,50.8095215` |
+| Bot-MXID + Homeserver | Client, Schritt 5 | `@osm-fulda-feed:matrix.org` |
+| Web-Login-Benutzer | `data/config.yaml`, Schritt 2 | `osm-fulda-feed` |
+| `update_interval` | Instanz-Config, Schritt 6 | `5` — hergeleitet aus der Feed-Rate |
+| `admins` | Instanz-Config, Schritt 6 | die eigene persönliche MXID |
 
-Die Anleitung unten beschreibt den Aufbau von null. Für den laufenden Betrieb
-siehe "Web-UI öffnen" und "Umzug auf einen anderen Host" am Ende.
+Alles andere kann so bleiben.
 
 ## Voraussetzungen
 
-- Docker mit Compose-Plugin auf dem VPS
+- Docker mit Compose-Plugin
 - Ein normaler Matrix-Account für den Bot, z. B. `@osm-fulda-feeds:euer.server`.
   Kein Admin, kein Application Service — ein gewöhnlicher Benutzer reicht.
 
@@ -71,10 +78,10 @@ Port 29316 ist absichtlich nur an localhost gebunden — die UI hat vollen Zugri
 auf den Bot-Account und gehört nicht ins offene Netz. Von außen ist da nichts
 erreichbar, auch ohne Firewall-Regel. Vom Laptop:
 
-    ssh -L 29316:127.0.0.1:29316 horst@vps
+    ssh -L 29316:127.0.0.1:29316 BENUTZER@HOST
 
 Dann im Browser: <http://localhost:29316/_matrix/maubot/>
-Login: der Benutzer aus Schritt 2 (hier `osm-fulda-feed`), **nicht** `root`.
+Login: der Benutzer aus Schritt 2, **nicht** `root`.
 
 ### 4. Plugin hochladen
 
@@ -87,8 +94,8 @@ in der UI unter *Plugins* hochladen.
 
 | Feld | Wert |
 |------|------|
-| User ID | `@osm-fulda-feed:matrix.org` |
-| Homeserver | `https://matrix.org` |
+| User ID | die MXID des Bots, z. B. `@osm-fulda-feed:matrix.org` |
+| Homeserver | z. B. `https://matrix.org` |
 | Access Token | siehe unten |
 | Device ID | leer lassen |
 | Display name | z. B. `OSM Fulda Feeds` |
@@ -101,7 +108,7 @@ sich das Token dann selbst. Sonst Token besorgen:
 
     curl -s -X POST https://matrix.org/_matrix/client/v3/login \
       -H 'Content-Type: application/json' \
-      -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"osm-fulda-feed"},"password":"BOT_PASSWORT","initial_device_display_name":"maubot"}'
+      -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"BOT_BENUTZER"},"password":"BOT_PASSWORT","initial_device_display_name":"maubot"}'
 
 `access_token` aus der Antwort ins Feld.
 
@@ -131,11 +138,13 @@ bleiben.
 `update_interval: 5` wegen des WHODIDIT-Feeds: der liefert nur die letzten 20
 Einträge, bei ~21 Changesets/Tag also knapp 22 Stunden Historie. Bei 5 Minuten
 Abstand kann nichts durchrutschen. Der Standardwert 60 wäre auch noch sicher,
-aber ohne Reserve, falls der Bot mal ein paar Stunden steht.
+aber ohne Reserve, falls der Bot mal ein paar Stunden steht. Für eine andere
+Region: Vorrat des Feeds durch die eigene Änderungsrate teilen, das ist das
+Zeitfenster, in dem der Bot ausfallen darf.
 
 ### 7. Im Matrix-Raum
 
-Bot einladen, dann:
+Bot einladen, dann — hier mit der Bounding Box des Landkreises Fulda:
 
     !rss subscribe https://www.openstreetmap.org/api/0.6/notes/feed?bbox=9.4272478,50.3561446,10.0830766,50.8095215
     !rss subscribe https://simon04.dev.openstreetmap.org/whodidit/scripts/rss.php?bbox=9.4272478,50.3561446,10.0830766,50.8095215
@@ -143,8 +152,8 @@ Bot einladen, dann:
 Weitere Befehle: `!rss subscriptions`, `!rss unsubscribe <id>`,
 `!rss template <id> <vorlage>`, `!rss notice <id> <true|false>`.
 
-Zum Prüfen, ob es läuft, den Changeset-Feed nehmen — ~21 Einträge/Tag, also
-binnen 1–2 Stunden sichtbar. Notes mit ~2,9/Tag taugen dafür nicht.
+Zum Prüfen, ob es läuft, den Changeset-Feed nehmen — bei Fulda ~21 Einträge/Tag,
+also binnen 1–2 Stunden sichtbar. Notes mit ~2,9/Tag taugen dafür nicht.
 
 Der Bot braucht keine Moderator-Rechte, einladen genügt. Ein unverschlüsselter
 Raum ist nötig — maubot kann E2EE nur mit zusätzlicher Konfiguration.
@@ -189,7 +198,7 @@ Oder per API:
     TOKEN=...   # persönlicher Access Token, Element: Einstellungen -> Hilfe & Über -> Erweitert
 
     # Alias -> Room-ID  ( # = %23, : = %3A )
-    ROOM=$(curl -s "https://matrix.org/_matrix/client/v3/directory/room/%23osm-fulda-changesets%3Amatrix.org" \
+    ROOM=$(curl -s "https://matrix.org/_matrix/client/v3/directory/room/%23DEIN-ALIAS%3Amatrix.org" \
       | python3 -c 'import sys,json; print(json.load(sys.stdin)["room_id"])')
 
     # ! für die URL escapen
@@ -232,13 +241,21 @@ Erwartet: `{"disable":true}`
 
 ## Die Feeds
 
+Zahlen für den Landkreis Fulda — für eine andere Region ändert sich die Rate,
+nicht die Struktur:
+
 | Feed | Abdeckung | Rate | Vorrat im Feed |
 |------|-----------|------|----------------|
 | Notes (osm.org) | Bounding Box des Landkreises, etwas Rand | ~2,9/Tag | 100 Einträge ≈ 35 Tage |
 | Changesets (WHODIDIT) | dieselbe Bounding Box | ~21/Tag | 20 Einträge ≈ 22 Stunden |
 
 Bounding Box `9.4272478,50.3561446,10.0830766,50.8095215` entspricht Relation
-[r62700](https://www.openstreetmap.org/relation/62700) (Landkreis Fulda).
+[r62700](https://www.openstreetmap.org/relation/62700) (Landkreis Fulda). Für
+die eigene Region: Relation auf osm.org suchen, deren Bounding Box übernehmen.
+
+Der Vorrat des WHODIDIT-Feeds ist fix (20 Einträge), die Rate nicht — in einer
+aktiveren Region schrumpft das Zeitfenster entsprechend und `update_interval`
+muss kleiner werden.
 
 Der offizielle Changeset-Feed `openstreetmap.org/history/feed?bbox=…` ist
 bewusst nicht in Benutzung: jeder Eintrag enthält drei `<link rel="alternate">`,
@@ -247,7 +264,7 @@ auf rohem osmChange-XML statt auf der Changeset-Seite.
 
 WHODIDIT kann statt `bbox=` auch `wkt=POLYGON((...))`, dann exakt auf die
 Kreisgrenze zugeschnitten (Raster ca. 1 km, Koordinaten sind lat×100 lon×100).
-Ergibt eine ~1,7 kB lange URL — funktioniert, ist aber unhandlich.
+Ergibt bei Fulda eine ~1,7 kB lange URL — funktioniert, ist aber unhandlich.
 
 ## Betrieb
 
@@ -271,6 +288,19 @@ Einträge):
 
     docker compose exec maubot sqlite3 /data/dbs/rss.db \
       "select id, error_count, url from feed; select room_id, feed_id from subscription;"
+
+## Was nicht im Repo steht
+
+Client, Instanz und Abos werden über die Web-UI beziehungsweise `!rss subscribe`
+angelegt und liegen danach in `data/maubot.db` und `data/dbs/rss.db`. Es gibt
+keine Konfigurationsdatei, aus der sich das reproduzieren ließe — das rss-Plugin
+hat für Abos keine API, und der Stand "was wurde schon gesehen" darf auch gar
+nicht deklarativ sein, sonst käme bei jedem Neuaufsetzen eine Flut alter
+Einträge.
+
+Dieses Repo ist deshalb die Anleitung und der Container, nicht der Zustand. Der
+Zustand ist `data/` — ignoriert, weil dort der Access Token des Bot-Accounts
+liegt, und zu sichern über den Umzugsweg unten.
 
 ## Umzug auf einen anderen Host
 

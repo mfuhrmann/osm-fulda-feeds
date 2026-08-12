@@ -6,6 +6,10 @@ data/
 # Plugin-Binaries: kommen als Release von https://github.com/maubot/rss/releases
 *.mbp
 
+# Eigener Betriebszustand: Host, Raeume, laufende Abos. Vorlage ist
+# SETUP.example.md -- das Repo selbst bleibt allgemeine Anleitung.
+SETUP.local.md
+
 # Lokale Claude-Code-Einstellungen: rechnerspezifisch, enthaelt Hostnamen.
 .claude/settings.local.json
 
