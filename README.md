@@ -54,19 +54,32 @@ also nicht editierbar. Entweder mit `sudo` bearbeiten oder im Container:
 Zwei Änderungen:
 
     admins:
-        root: ...              # unangetastet lassen
+        root: ""               # leer lassen, ein Passwort hat hier keine Wirkung
         osm: DEIN_PASSWORT     # neuer Benutzer für den Web-Login
 
     server:
         public_url: http://localhost:29316
 
 **Wichtig: nicht `root` als Login-Benutzer verwenden.** maubot lehnt für `root`
-jede Passwort-Anmeldung grundsätzlich ab (`check_password` gibt für `root`
-immer False zurück) — `root` kommt nur über `server.unshared_secret` rein. Du
-brauchst einen zweiten Eintrag unter `admins:` mit beliebigem Namen.
+jede Passwort-Anmeldung ab, bevor der hinterlegte Wert überhaupt angeschaut
+wird (`maubot/config.py`):
+
+    def check_password(self, user: str, passwd: str) -> bool:
+        if user == "root":
+            return False
+        ...
+
+Ein Passwort bei `root` einzutragen ist deshalb nicht falsch, sondern
+wirkungslos — der Login scheitert trotzdem, und man sucht den Fehler beim
+Passwort. `root` kommt ausschließlich über `server.unshared_secret` rein: wer
+beim Login statt Benutzer/Passwort das Secret schickt, ist eingeloggt, und ohne
+`user`-Feld ist das per Default `root`. Für die Web-Maske brauchst du einen
+zweiten Eintrag unter `admins:` mit beliebigem Namen.
 
 Passwörter werden beim Start durch ihren bcrypt-Hash ersetzt, im Klartext
-stehen sie nur bis zum ersten Neustart in der Datei.
+stehen sie nur bis zum ersten Neustart in der Datei. Eine Falle dabei: schreibt
+man wörtlich `password`, ersetzt maubot das nicht durch den Hash, sondern durch
+ein zufällig erzeugtes Token — der Eintrag ist dann unbrauchbar.
 
 Dann:
 
@@ -135,12 +148,10 @@ Matrix-Raum abonnieren darf, ohne dort Moderator zu sein. Deine persönliche
 MXID, nicht die des Bots. Bist du im Raum ohnehin Admin, kann die Liste leer
 bleiben.
 
-`update_interval: 5` wegen des WHODIDIT-Feeds: der liefert nur die letzten 20
-Einträge, bei ~21 Changesets/Tag also knapp 22 Stunden Historie. Bei 5 Minuten
-Abstand kann nichts durchrutschen. Der Standardwert 60 wäre auch noch sicher,
-aber ohne Reserve, falls der Bot mal ein paar Stunden steht. Für eine andere
-Region: Vorrat des Feeds durch die eigene Änderungsrate teilen, das ist das
-Zeitfenster, in dem der Bot ausfallen darf.
+`update_interval: 5` statt der Voreinstellung `60`, weil der WHODIDIT-Feed nur
+20 Einträge hält: Bei einem Schub — Mapping-Abend, Importlauf — können in einer
+Stunde mehr Changesets anfallen, als der Feed überhaupt vorhält, und der Rest
+ist dann weg. Ausführlich unter [Die Feeds](#die-feeds).
 
 ### 7. Im Matrix-Raum
 
@@ -241,21 +252,74 @@ Erwartet: `{"disable":true}`
 
 ## Die Feeds
 
-Zahlen für den Landkreis Fulda — für eine andere Region ändert sich die Rate,
-nicht die Struktur:
+### Warum die Größe des Feeds zählt
 
-| Feed | Abdeckung | Rate | Vorrat im Feed |
-|------|-----------|------|----------------|
-| Notes (osm.org) | Bounding Box des Landkreises, etwas Rand | ~2,9/Tag | 100 Einträge ≈ 35 Tage |
-| Changesets (WHODIDIT) | dieselbe Bounding Box | ~21/Tag | 20 Einträge ≈ 22 Stunden |
+Ein RSS-Feed ist ein **Fenster, kein Archiv**. Der Server liefert immer nur die
+letzten N Einträge; taucht ein neuer auf, fällt der älteste hinten raus. Der Bot
+merkt sich, was er zuletzt gesehen hat, und postet beim nächsten Abruf alles,
+was seitdem dazugekommen ist.
 
-Bounding Box `9.4272478,50.3561446,10.0830766,50.8095215` entspricht Relation
-[r62700](https://www.openstreetmap.org/relation/62700) (Landkreis Fulda). Für
-die eigene Region: Relation auf osm.org suchen, deren Bounding Box übernehmen.
+Daraus folgt die einzige Zahl, die im Betrieb wirklich zählt:
 
-Der Vorrat des WHODIDIT-Feeds ist fix (20 Einträge), die Rate nicht — in einer
-aktiveren Region schrumpft das Zeitfenster entsprechend und `update_interval`
-muss kleiner werden.
+> **Wie lange darf der Bot stehen, ohne dass etwas verloren geht?**
+> So lange, wie der Feed braucht, um sich einmal komplett zu erneuern.
+
+Steht der Bot länger, sind die Einträge, die in der Zwischenzeit hinten
+rausgefallen sind, endgültig weg — sie werden nie gepostet, und man merkt es
+nicht, weil ja weiterhin neue Meldungen kommen.
+
+Wie lang dieses Fenster ist, hängt an zwei Dingen: **wie viele Einträge der Feed
+hält** (fest vorgegeben) und **wie schnell deine Region sie nachliefert**
+(hängt an der Größe und Aktivität des Gebiets). Deshalb die Angaben pro Tag —
+sie sind kein Selbstzweck, sondern nur der Zwischenschritt zur Fensterlänge:
+
+    Fenster = Einträge im Feed ÷ neue Einträge pro Tag
+
+### Die Zahlen für den Landkreis Fulda
+
+Beobachtete Werte, kein Richtwert für anderswo:
+
+| Feed | hält | neue Einträge | Fenster |
+|------|------|---------------|---------|
+| Notes (osm.org) | 100 Einträge | ~2,9 pro Tag | 100 ÷ 2,9 ≈ **35 Tage** |
+| Changesets (WHODIDIT) | 20 Einträge | ~21 pro Tag | 20 ÷ 21 ≈ **knapp 1 Tag** |
+
+Die Changesets sind also der enge Fall: Der Bot darf keinen ganzen Tag stehen.
+Bei den Notes wären fünf Wochen Ausfall verkraftbar.
+
+Umgekehrt heißt das auch: Der Changeset-Feed eignet sich zum Prüfen, ob alles
+läuft — bei ~21 Einträgen am Tag ist ein kompletter stiller Tag praktisch
+ausgeschlossen. Der Notes-Feed taugt dafür mit ~2,9 am Tag nicht.
+
+### Für die eigene Region
+
+Die Rate musst du nicht schätzen, du kannst das Fenster direkt ablesen: Feed-URL
+im Browser öffnen und beim **ältesten** Eintrag auf den Zeitstempel schauen. Wie
+weit der zurückliegt, ist genau dein Fenster.
+
+In einer aktiveren Region als Fulda schrumpft es entsprechend — bei der
+dreifachen Änderungsrate hält der WHODIDIT-Feed statt einem Tag nur noch acht
+Stunden.
+
+Bounding Box: Relation der eigenen Region auf osm.org suchen und deren Bounding
+Box übernehmen. Für Fulda ist das
+[r62700](https://www.openstreetmap.org/relation/62700) →
+`9.4272478,50.3561446,10.0830766,50.8095215`.
+
+### Was `update_interval` damit zu tun hat — und was nicht
+
+Häufiger abfragen **verlängert das Fenster nicht.** Gegen einen langen Ausfall
+hilft nur die Größe des Feeds, und die ist vorgegeben.
+
+Wogegen ein kurzes Intervall hilft, ist ein **Schub**: Wenn zwischen zwei
+Abrufen mehr Einträge auflaufen, als der Feed überhaupt hält, ist der Rest weg,
+auch bei laufendem Bot. Bei einem Mapping-Abend mit 30 Changesets in einer
+Stunde würde ein Intervall von 60 Minuten in genau diese Falle laufen — der
+WHODIDIT-Feed hält nur 20. Mit 5 Minuten sammeln sich pro Abruf nur wenige
+Einträge an, und das kann nicht passieren.
+
+Der zweite Effekt ist schlicht, wie frisch die Meldungen ankommen: mit `5`
+innerhalb von fünf Minuten, mit `60` bis zu einer Stunde später.
 
 Der offizielle Changeset-Feed `openstreetmap.org/history/feed?bbox=…` ist
 bewusst nicht in Benutzung: jeder Eintrag enthält drei `<link rel="alternate">`,
@@ -280,8 +344,9 @@ Das rss-Plugin macht bei fehlschlagenden Feeds ein exponentielles Backoff bis zu
 kommt also nicht sofort nach der Reparatur zurück — Instanz neu starten, wenn es
 schneller gehen soll.
 
-Faustregel zur Kontrolle: bei ~21 Changesets/Tag ist ein ganzer stiller Tag
-praktisch ausgeschlossen. Der Notes-Feed taugt mit ~2,9/Tag nicht als Test.
+Faustregel zur Kontrolle: Ein ganzer stiller Tag im Changeset-Raum heißt, dass
+etwas kaputt ist — und zugleich, dass das Fenster des WHODIDIT-Feeds gerade
+abläuft. Siehe [Die Feeds](#die-feeds).
 
 Direkt in die Plugin-Datenbank schauen (Abos, Fehlerzähler, zuletzt gesehene
 Einträge):
