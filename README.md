@@ -1,0 +1,309 @@
+# maubot + rss — OSM-Monitoring Landkreis Fulda nach Matrix
+
+Postet neue OSM-Hinweise (Notes) und Changesets aus dem Landkreis Fulda in einen
+Matrix-Raum. Ersatz für `@rss:t2bot.io` (seit 2023 ungepflegt) und
+`@feeds:integrations.ems.host` (reagiert nicht auf Befehle).
+
+## Läuft wo
+
+Produktiv auf dem VPS unter `~/osm-fulda-feeds` (`ssh horst@vps`), Container
+`osm-fulda-feeds-maubot-1`, `restart: unless-stopped`.
+
+Bot-Account `@osm-fulda-feed:matrix.org`, Web-Login-Benutzer `osm-fulda-feed`.
+
+Aktuelle Abos:
+
+| Raum | Feed |
+|------|------|
+| `!JrryfqeuioiemGjGpk:matrix.org` | Changesets, offizieller OSM-Feed |
+| `!fwffVvnqgIxsSlpxMa:matrix.org` | Notes |
+
+Die Anleitung unten beschreibt den Aufbau von null. Für den laufenden Betrieb
+siehe "Web-UI öffnen" und "Umzug auf einen anderen Host" am Ende.
+
+## Voraussetzungen
+
+- Docker mit Compose-Plugin auf dem VPS
+- Ein normaler Matrix-Account für den Bot, z. B. `@osm-fulda-feeds:euer.server`.
+  Kein Admin, kein Application Service — ein gewöhnlicher Benutzer reicht.
+
+## Einrichtung
+
+### 1. Erster Start
+
+    docker compose up -d
+
+maubot legt `data/config.yaml` an. Im Log steht "Please modify the config file
+and restart the container" — der Container läuft aber trotzdem weiter und
+lauscht bereits auf 29316. Nicht wundern.
+
+### 2. Config anpassen
+
+`data/config.yaml` gehört UID 1337 und hat Modus 600, ist als normaler Benutzer
+also nicht editierbar. Entweder mit `sudo` bearbeiten oder im Container:
+
+    docker compose exec maubot vi /data/config.yaml
+
+Zwei Änderungen:
+
+    admins:
+        root: ...              # unangetastet lassen
+        osm: DEIN_PASSWORT     # neuer Benutzer für den Web-Login
+
+    server:
+        public_url: http://localhost:29316
+
+**Wichtig: nicht `root` als Login-Benutzer verwenden.** maubot lehnt für `root`
+jede Passwort-Anmeldung grundsätzlich ab (`check_password` gibt für `root`
+immer False zurück) — `root` kommt nur über `server.unshared_secret` rein. Du
+brauchst einen zweiten Eintrag unter `admins:` mit beliebigem Namen.
+
+Passwörter werden beim Start durch ihren bcrypt-Hash ersetzt, im Klartext
+stehen sie nur bis zum ersten Neustart in der Datei.
+
+Dann:
+
+    docker compose restart
+
+### 3. Web-UI öffnen
+
+Port 29316 ist absichtlich nur an localhost gebunden — die UI hat vollen Zugriff
+auf den Bot-Account und gehört nicht ins offene Netz. Von außen ist da nichts
+erreichbar, auch ohne Firewall-Regel. Vom Laptop:
+
+    ssh -L 29316:127.0.0.1:29316 horst@vps
+
+Dann im Browser: <http://localhost:29316/_matrix/maubot/>
+Login: der Benutzer aus Schritt 2 (hier `osm-fulda-feed`), **nicht** `root`.
+
+### 4. Plugin hochladen
+
+`xyz.maubot.rss-v0.4.1.mbp` von <https://github.com/maubot/rss/releases> holen,
+in der UI unter *Plugins* hochladen.
+
+### 5. Client anlegen
+
+*Clients* → neu:
+
+| Feld | Wert |
+|------|------|
+| User ID | `@osm-fulda-feed:matrix.org` |
+| Homeserver | `https://matrix.org` |
+| Access Token | siehe unten |
+| Device ID | leer lassen |
+| Display name | z. B. `OSM Fulda Feeds` |
+| Sync | an |
+| Autojoin | **an** — sonst nimmt der Bot Einladungen nicht an |
+| Enabled | an |
+
+Bietet die Maske ein Passwortfeld statt Access Token, das nehmen — maubot holt
+sich das Token dann selbst. Sonst Token besorgen:
+
+    curl -s -X POST https://matrix.org/_matrix/client/v3/login \
+      -H 'Content-Type: application/json' \
+      -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"osm-fulda-feed"},"password":"BOT_PASSWORT","initial_device_display_name":"maubot"}'
+
+`access_token` aus der Antwort ins Feld.
+
+### 6. Instanz anlegen
+
+*Instances* → neu:
+
+| Feld | Wert |
+|------|------|
+| ID | `rss` |
+| Type | `xyz.maubot.rss` |
+| Primary user | der Client aus Schritt 5 |
+| Enabled / Running | beides an |
+
+Instanz-Config:
+
+    update_interval: 5
+    command_prefix: "rss"
+    admins:
+    - "@deine-persoenliche-mxid:matrix.org"
+
+`admins` ist hier **nicht** der Web-Login aus Schritt 2, sondern wer im
+Matrix-Raum abonnieren darf, ohne dort Moderator zu sein. Deine persönliche
+MXID, nicht die des Bots. Bist du im Raum ohnehin Admin, kann die Liste leer
+bleiben.
+
+`update_interval: 5` wegen des WHODIDIT-Feeds: der liefert nur die letzten 20
+Einträge, bei ~21 Changesets/Tag also knapp 22 Stunden Historie. Bei 5 Minuten
+Abstand kann nichts durchrutschen. Der Standardwert 60 wäre auch noch sicher,
+aber ohne Reserve, falls der Bot mal ein paar Stunden steht.
+
+### 7. Im Matrix-Raum
+
+Bot einladen, dann:
+
+    !rss subscribe https://www.openstreetmap.org/api/0.6/notes/feed?bbox=9.4272478,50.3561446,10.0830766,50.8095215
+    !rss subscribe https://simon04.dev.openstreetmap.org/whodidit/scripts/rss.php?bbox=9.4272478,50.3561446,10.0830766,50.8095215
+
+Weitere Befehle: `!rss subscriptions`, `!rss unsubscribe <id>`,
+`!rss template <id> <vorlage>`, `!rss notice <id> <true|false>`.
+
+Zum Prüfen, ob es läuft, den Changeset-Feed nehmen — ~21 Einträge/Tag, also
+binnen 1–2 Stunden sichtbar. Notes mit ~2,9/Tag taugen dafür nicht.
+
+Der Bot braucht keine Moderator-Rechte, einladen genügt. Ein unverschlüsselter
+Raum ist nötig — maubot kann E2EE nur mit zusätzlicher Konfiguration.
+
+## Mehrere Räume
+
+Ein Bot bedient beliebig viele Räume. Kein zweiter Client, keine zweite Instanz
+— einladen und im neuen Raum `!rss subscribe <url>` tippen.
+
+Abos hängen an der Kombination Feed + Raum. Derselbe Feed kann in mehreren
+Räumen liegen, oder Notes hier und Changesets dort.
+
+Abgerufen wird jede URL trotzdem nur einmal pro Intervall; das Plugin verteilt
+das Ergebnis an alle Räume, die sie abonniert haben. Kein zusätzlicher Traffic
+pro Raum.
+
+`!rss subscriptions` zeigt immer nur die Abos des Raums, in dem der Befehl
+getippt wird.
+
+Bei vielen Räumen greift `spam_sleep: 2` — zwei Sekunden Pause zwischen den
+Sendungen, damit matrix.org nicht drosselt.
+
+## Link-Vorschauen abschalten
+
+Jede Bot-Nachricht enthält einen Link, Element hängt je nach Einstellung eine
+Vorschaukarte dran. Das erzeugt der Client, nicht der Bot — maubot kann es nicht
+unterdrücken.
+
+Abschalten geht auf drei Ebenen. Die Raum-Ebene ist die einzige, die man als
+Betreiber selbst setzen kann:
+
+| Ebene | Wirkung | Wie |
+|-------|---------|-----|
+| Raum (State-Event) | Standard für alle im Raum | siehe unten, braucht Moderator |
+| Benutzer | nur für sich selbst | Element-Einstellungen |
+| Server | alle Räume der Instanz | `url_preview_enabled: false`, auf matrix.org nicht möglich |
+
+Raum-Default setzen — in Element: Raumeinstellungen → *URL-Vorschau* →
+"URL-Vorschauen standardmäßig für Teilnehmer dieses Raums aktivieren" abwählen.
+Oder per API:
+
+    TOKEN=...   # persönlicher Access Token, Element: Einstellungen -> Hilfe & Über -> Erweitert
+
+    # Alias -> Room-ID  ( # = %23, : = %3A )
+    ROOM=$(curl -s "https://matrix.org/_matrix/client/v3/directory/room/%23osm-fulda-changesets%3Amatrix.org" \
+      | python3 -c 'import sys,json; print(json.load(sys.stdin)["room_id"])')
+
+    # ! für die URL escapen
+    ROOM_ENC=$(python3 -c 'import sys,urllib.parse as u; print(u.quote(sys.argv[1], safe=""))' "$ROOM")
+
+    curl -X PUT "https://matrix.org/_matrix/client/v3/rooms/$ROOM_ENC/state/org.matrix.room.preview_urls/" \
+      -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+      -d '{"disable": true}'
+
+Nicht `ROOM_ENC=${ROOM/#!/%21}` schreiben — in der interaktiven Bash frisst die
+History-Expansion das `!` (`bash: !/: event not found`). Entweder `set +H` davor
+oder den Umweg über Python wie oben.
+
+**Der Raum-Default wirkt nur bei Leuten ohne eigene Einstellung.** Elements
+Rangfolge ist `device > room-device > room-account > account > room > default` —
+das State-Event steht weit hinten. Wer die Vorschau in seinem Client einmal
+bewusst aktiviert hat, sieht sie weiterhin und muss sie selbst abwählen:
+
+- nur dieser Raum: Raumeinstellungen → *URL-Vorschau* → "für diesen Raum
+  aktivieren (betrifft nur dich)"
+- überall: Einstellungen → *Präferenzen* → "Vorschau von Links standardmäßig
+  aktivieren"
+
+Erzwingen lässt es sich also nicht. Der einzige Hebel, der wirklich bei allen
+greift, ist bot-seitig: Vorschauen brauchen ein `<a href>` im gerenderten HTML,
+ein Template ohne Markdown-Link erzeugt keine.
+
+    !rss template <id> New in $feed_title: **$title** — `$link`
+
+Kostet die Klickbarkeit und lohnt sich normalerweise nicht. Sinnvoller: den
+Hinweis in Raumbeschreibung, angepinnte Nachricht oder OSM-Wiki legen und die
+Entscheidung den Leuten überlassen.
+
+Aktuellen Stand prüfen:
+
+    curl -s "https://matrix.org/_matrix/client/v3/rooms/$ROOM_ENC/state/org.matrix.room.preview_urls/" \
+      -H "Authorization: Bearer $TOKEN"
+
+Erwartet: `{"disable":true}`
+
+## Die Feeds
+
+| Feed | Abdeckung | Rate | Vorrat im Feed |
+|------|-----------|------|----------------|
+| Notes (osm.org) | Bounding Box des Landkreises, etwas Rand | ~2,9/Tag | 100 Einträge ≈ 35 Tage |
+| Changesets (WHODIDIT) | dieselbe Bounding Box | ~21/Tag | 20 Einträge ≈ 22 Stunden |
+
+Bounding Box `9.4272478,50.3561446,10.0830766,50.8095215` entspricht Relation
+[r62700](https://www.openstreetmap.org/relation/62700) (Landkreis Fulda).
+
+Der offizielle Changeset-Feed `openstreetmap.org/history/feed?bbox=…` ist
+bewusst nicht in Benutzung: jeder Eintrag enthält drei `<link rel="alternate">`,
+und viele Clients wählen die API-Variante statt der HTML-Seite — man landet dann
+auf rohem osmChange-XML statt auf der Changeset-Seite.
+
+WHODIDIT kann statt `bbox=` auch `wkt=POLYGON((...))`, dann exakt auf die
+Kreisgrenze zugeschnitten (Raster ca. 1 km, Koordinaten sind lat×100 lon×100).
+Ergibt eine ~1,7 kB lange URL — funktioniert, ist aber unhandlich.
+
+## Betrieb
+
+Logs:
+
+    docker compose logs -f maubot
+
+Anders als bei den gehosteten Bots siehst du Feed-Fehler hier direkt, statt sie
+am ausbleibenden Post zu erraten.
+
+Das rss-Plugin macht bei fehlschlagenden Feeds ein exponentielles Backoff bis zu
+`max_backoff` (Standard 7200 Minuten = 5 Tage). Ein Feed, der länger weg war,
+kommt also nicht sofort nach der Reparatur zurück — Instanz neu starten, wenn es
+schneller gehen soll.
+
+Faustregel zur Kontrolle: bei ~21 Changesets/Tag ist ein ganzer stiller Tag
+praktisch ausgeschlossen. Der Notes-Feed taugt mit ~2,9/Tag nicht als Test.
+
+Direkt in die Plugin-Datenbank schauen (Abos, Fehlerzähler, zuletzt gesehene
+Einträge):
+
+    docker compose exec maubot sqlite3 /data/dbs/rss.db \
+      "select id, error_count, url from feed; select room_id, feed_id from subscription;"
+
+## Umzug auf einen anderen Host
+
+`data/` enthält Access Token, Client, Instanz, Abos und den Stand "was wurde
+schon gesehen". Mitkopieren, dann ist nichts neu einzurichten — und es gibt
+keine Flut alter Einträge beim ersten Start.
+
+**Nie beide Instanzen gleichzeitig laufen lassen.** Zwei maubots mit demselben
+Access Token syncen parallel: doppelte Posts und Device-Konflikte.
+
+    # Quelle stoppen
+    cd ~/osm-fulda-feeds && docker compose down
+
+    # packen -- via Container, dann braucht es kein sudo auf dem Host
+    docker run --rm -v ~/osm-fulda-feeds:/src:ro -v /tmp:/out alpine \
+      tar -C /src --numeric-owner -czf /out/osm-fulda-feeds.tgz .
+
+    scp /tmp/osm-fulda-feeds.tgz ziel:/tmp/
+
+    # auf dem Ziel
+    mkdir -p ~/osm-fulda-feeds
+    docker run --rm -v ~/osm-fulda-feeds:/dst -v /tmp:/in:ro alpine \
+      tar -C /dst --numeric-owner -xzf /in/osm-fulda-feeds.tgz
+    cd ~/osm-fulda-feeds && docker compose up -d && docker compose logs -f
+
+`--numeric-owner` ist der Punkt, der sonst schiefgeht: ohne das mappt tar UID
+1337 auf einen Namen und beim Auspacken auf eine andere UID — dann kommt maubot
+nicht mehr an seine eigenen Dateien.
+
+Im Log erwarten:
+
+    Client started, starting plugin instances...
+    Started instance of xyz.maubot.rss v0.4.1
+    Polling 2 feeds
+
+Danach `!rss ls` in einem der Räume — stehen die Abos drin, ist der Umzug durch.

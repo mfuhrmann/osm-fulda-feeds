@@ -1,0 +1,9 @@
+services:
+  maubot:
+    image: dock.mau.dev/maubot/maubot:v0.6.0
+    restart: unless-stopped
+    # Web UI only on localhost -- reach it via SSH tunnel, see README.
+    ports:
+      - "127.0.0.1:29316:29316"
+    volumes:
+      - ./data:/data

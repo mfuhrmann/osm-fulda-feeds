@@ -1,0 +1,15 @@
+# Laufzeitdaten von maubot -- NICHT committen.
+# Enthaelt den Access Token des Bot-Accounts (config.yaml, maubot.db),
+# die Instanz-Config und den Feed-Stand "was wurde schon gesehen" (dbs/rss.db).
+data/
+
+# Plugin-Binaries: kommen als Release von https://github.com/maubot/rss/releases
+*.mbp
+
+# Lokale Claude-Code-Einstellungen: rechnerspezifisch, enthaelt Hostnamen.
+.claude/settings.local.json
+
+# Editor / OS
+*~
+*.swp
+.DS_Store
