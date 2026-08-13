@@ -402,3 +402,11 @@ Im Log erwarten:
     Polling 2 feeds
 
 Danach `!rss ls` in einem der Räume — stehen die Abos drin, ist der Umzug durch.
+
+## Lizenz
+
+[CC BY-SA 4.0](./LICENSE) — Namensnennung, Weitergabe unter gleichen
+Bedingungen. Also: nimm das hier als Vorlage für deine Region, pass die Bounding
+Box und die Zahlen an, nenne die Quelle und stell das Ergebnis unter dieselbe
+Lizenz. Keine Copyleft-Pflicht für den Bot selbst — maubot und das rss-Plugin
+haben ihre eigenen Lizenzen.
